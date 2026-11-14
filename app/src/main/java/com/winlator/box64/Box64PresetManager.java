@@ -70,6 +70,22 @@ public abstract class Box64PresetManager {
             envVars.put("BOX64_DYNAREC_NATIVEFLAGS", "1");
             envVars.put("BOX64_DYNAREC_WEAKBARRIER", "2");
         }
+        else if (id.equals(Box64Preset.SNAPDRAGON_8_GEN_2)) {
+            // Tuned starting point for Snapdragon 8 Gen 2 (Cortex-X3 prime core).
+            // Close to PERFORMANCE, but with BIGBLOCK=2 for fewer crashes in large
+            // 3D games. Refine with testing.
+            envVars.put("BOX64_DYNAREC_SAFEFLAGS", "1");
+            envVars.put("BOX64_DYNAREC_FASTNAN", "1");
+            envVars.put("BOX64_DYNAREC_FASTROUND", "1");
+            envVars.put("BOX64_DYNAREC_X87DOUBLE", "0");
+            envVars.put("BOX64_DYNAREC_BIGBLOCK", "2");
+            envVars.put("BOX64_DYNAREC_STRONGMEM", "0");
+            envVars.put("BOX64_DYNAREC_FORWARD", "512");
+            envVars.put("BOX64_DYNAREC_CALLRET", "1");
+            envVars.put("BOX64_DYNAREC_WAIT", "1");
+            envVars.put("BOX64_DYNAREC_NATIVEFLAGS", "1");
+            envVars.put("BOX64_DYNAREC_WEAKBARRIER", "2");
+        }
         else if (id.startsWith(Box64Preset.CUSTOM)) {
             for (String[] preset : customPresetsIterator(context)) {
                 if (preset[0].equals(id)) {
@@ -88,6 +104,7 @@ public abstract class Box64PresetManager {
         presets.add(new Box64Preset(Box64Preset.CONSERVATIVE, context.getString(R.string.conservative)));
         presets.add(new Box64Preset(Box64Preset.INTERMEDIATE, context.getString(R.string.intermediate)));
         presets.add(new Box64Preset(Box64Preset.PERFORMANCE, context.getString(R.string.performance)));
+        presets.add(new Box64Preset(Box64Preset.SNAPDRAGON_8_GEN_2, context.getString(R.string.snapdragon_8_gen_2)));
         for (String[] preset : customPresetsIterator(context)) presets.add(new Box64Preset(preset[0], preset[1]));
         return presets;
     }

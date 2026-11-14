@@ -9,6 +9,7 @@ import com.winlator.container.DXWrappers;
 import com.winlator.core.AppUtils;
 import com.winlator.core.DefaultVersion;
 import com.winlator.core.EnvVars;
+import com.winlator.core.DeviceProfile;
 import com.winlator.core.FileUtils;
 import com.winlator.core.GeneralComponents;
 import com.winlator.core.KeyValueSet;
@@ -79,16 +80,21 @@ public class DXVKConfigDialog extends ContentDialog {
         File dxvkConfigFile = new File(rootDir, RootFS.USER_CONFIG_PATH+"/dxvk.conf");
 
         FileUtils.delete(dxvkConfigFile);
-        String content = getDXVKConfigContent(config);
+        String content = getDXVKConfigContent(context, config);
         if (FileUtils.writeString(dxvkConfigFile, content)) {
             envVars.put("DXVK_CONFIG_FILE", RootFS.getDosUserConfigPath()+"\\dxvk.conf");
         }
     }
 
-    private static String getDXVKConfigContent(KeyValueSet config) {
+    private static String getDXVKConfigContent(Context context, KeyValueSet config) {
         String content = "";
 
         String maxDeviceMemory = config.get("maxDeviceMemory");
+        // CPU and GPU share RAM on Android. On low-memory devices, cap the video memory
+        // games see unless the user picked a value, so they stream fewer textures.
+        if ((maxDeviceMemory.isEmpty() || maxDeviceMemory.equals("0")) && DeviceProfile.isLowMemoryDevice(context)) {
+            maxDeviceMemory = DeviceProfile.LOW_MEMORY_DXVK_DEVICE_MEMORY_MB;
+        }
         if (!maxDeviceMemory.isEmpty() && !maxDeviceMemory.equals("0")) {
             content += "dxgi.maxDeviceMemory = "+maxDeviceMemory+"\n";
             content += "dxgi.maxSharedMemory = "+maxDeviceMemory+"\n";
