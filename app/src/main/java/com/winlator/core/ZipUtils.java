@@ -76,6 +76,9 @@ public abstract class ZipUtils {
             while (entries.hasMoreElements()) {
                 ZipArchiveEntry entry = entries.nextElement();
                 File file = new File(destination, entry.getName());
+                if (!file.getCanonicalPath().startsWith(destination.getCanonicalPath()+File.separator)) continue;
+                File parent = file.getParentFile();
+                if (parent != null && !parent.isDirectory()) parent.mkdirs();
 
                 if (entry.isDirectory()) {
                     if (!file.isDirectory()) file.mkdirs();

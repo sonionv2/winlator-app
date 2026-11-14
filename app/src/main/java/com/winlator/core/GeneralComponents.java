@@ -3,7 +3,10 @@ package com.winlator.core;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
+import android.provider.OpenableColumns;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.PopupMenu;
@@ -19,6 +22,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
@@ -105,7 +111,7 @@ public abstract class GeneralComponents {
             if (this == Type.SOUNDFONT || this == ADRENOTOOLS_DRIVER) {
                 installMode = InstallMode.FILE;
             }
-            else if (this == Type.WINED3D || this == Type.DXVK || this == Type.VKD3D) {
+            else if (this == Type.WINED3D || this == Type.DXVK || this == Type.VKD3D || this == Type.TURNIP) {
                 installMode = InstallMode.BOTH;
             }
             else installMode = InstallMode.DOWNLOAD;
@@ -274,29 +280,71 @@ public abstract class GeneralComponents {
 
     private static void openFileForInstall(final MainActivity activity, final Type type, final Spinner spinner, final String defaultItem) {
         activity.setOpenFileCallback((uri) -> {
+            // The stock code only resolved paths on primary external storage, so files picked
+            // from Downloads, Recent, SD cards or cloud providers failed silently. Copy whatever
+            // the picker returns into the cache instead.
+            File tempFile = null;
+            File source = null;
             String path = FileUtils.getFilePathFromUri(uri);
-            if (path == null) return;
+            if (path != null && new File(path).canRead()) {
+                source = new File(path);
+            }
+            else {
+                String displayName = queryDisplayName(activity, uri);
+                tempFile = new File(activity.getCacheDir(), "component-import-"+System.currentTimeMillis()+"-"+(displayName != null ? displayName.replaceAll("[^A-Za-z0-9._-]", "_") : "file"));
+                if (copyUriToFile(activity, uri, tempFile)) {
+                    source = tempFile;
+                    path = displayName != null ? displayName : tempFile.getName();
+                }
+            }
 
+            if (source == null) {
+                AppUtils.showToast(activity, "Couldn't read the selected file.");
+                return;
+            }
+
+            boolean installed = false;
             try {
-                File source = new File(path);
                 switch (type) {
                     case SOUNDFONT: {
                         String filename = FileUtils.getName(path);
                         File destination = new File(getComponentDir(type, activity), filename);
                         if (destination.isFile()) FileUtils.delete(destination);
-                        if (FileUtils.copy(source, destination)) loadSpinner(type, spinner, parseDisplayText(type, filename), defaultItem);
+                        if (FileUtils.copy(source, destination)) {
+                            loadSpinner(type, spinner, parseDisplayText(type, filename), defaultItem);
+                            installed = true;
+                        }
                         break;
                     }
                     case ADRENOTOOLS_DRIVER: {
                         byte[] manifestData = ZipUtils.read(source, "*.json");
-                        if (manifestData != null) {
-                            JSONObject manifestJSONObject = new JSONObject(new String(manifestData));
-                            String filename = manifestJSONObject.optString("name", manifestJSONObject.optString("libraryName", ""));
-                            File destination = new File(getComponentDir(type, activity), filename);
-                            if (destination.isDirectory()) FileUtils.delete(destination);
-                            destination.mkdirs();
-                            if (ZipUtils.extract(source, destination)) loadSpinner(type, spinner, filename, defaultItem);
+                        if (manifestData == null) {
+                            AppUtils.showToast(activity, "Not an adrenotools driver: no meta.json found in the zip.");
+                            break;
                         }
+                        JSONObject manifestJSONObject = new JSONObject(new String(manifestData));
+                        String filename = manifestJSONObject.optString("name", manifestJSONObject.optString("libraryName", ""));
+                        filename = filename.trim().replaceAll("[/\\\\:*?\"<>|]", "_");
+                        if (filename.isEmpty()) {
+                            AppUtils.showToast(activity, "Driver manifest has no name or libraryName.");
+                            break;
+                        }
+                        File destination = new File(getComponentDir(type, activity), filename);
+                        if (destination.isDirectory()) FileUtils.delete(destination);
+                        destination.mkdirs();
+                        if (!ZipUtils.extract(source, destination)) {
+                            FileUtils.delete(destination);
+                            AppUtils.showToast(activity, "Couldn't extract the driver zip.");
+                            break;
+                        }
+                        flattenSingleSubdirectory(destination);
+                        if (getDefinitivePath(type, activity, filename) == null) {
+                            FileUtils.delete(destination);
+                            AppUtils.showToast(activity, "Driver library named in meta.json wasn't found in the zip.");
+                            break;
+                        }
+                        loadSpinner(type, spinner, filename, defaultItem);
+                        installed = true;
                         break;
                     }
                     default: {
@@ -312,19 +360,66 @@ public abstract class GeneralComponents {
                             if (contentType.equals(type.name()) && !identifier.isEmpty() && filesJSONArray != null) {
                                 installFromPackagedFile(activity, compressedType, type, source, identifier, filesJSONArray);
                                 loadSpinner(type, spinner, identifier, defaultItem);
+                                installed = true;
                             }
+                            else AppUtils.showToast(activity, "This package isn't a "+type.title()+" component.");
                         }
+                        else if (type == Type.TURNIP && path.toLowerCase(Locale.ENGLISH).endsWith(".zip")) {
+                            AppUtils.showToast(activity, "This looks like an adrenotools driver. Install it under the Vortek driver's settings instead.");
+                        }
+                        else AppUtils.showToast(activity, "Unrecognized "+type.title()+" package (expected a .tzst with a manifest).");
                         break;
                     }
                 }
             }
-            catch (JSONException e) {}
+            catch (JSONException e) {
+                AppUtils.showToast(activity, "The package's manifest is invalid.");
+            }
+            finally {
+                if (tempFile != null) FileUtils.delete(tempFile);
+            }
+
+            if (installed) AppUtils.showToast(activity, type.title()+" installed.");
         });
 
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
         activity.startActivityForResult(intent, MainActivity.OPEN_FILE_REQUEST_CODE);
+    }
+
+    private static String queryDisplayName(Context context, Uri uri) {
+        try (Cursor cursor = context.getContentResolver().query(uri, new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) return cursor.getString(0);
+        }
+        catch (Exception e) {}
+        return null;
+    }
+
+    private static boolean copyUriToFile(Context context, Uri uri, File destination) {
+        try (InputStream inStream = context.getContentResolver().openInputStream(uri);
+             OutputStream outStream = new FileOutputStream(destination)) {
+            if (inStream == null) return false;
+            byte[] buffer = new byte[64 * 1024];
+            int bytesRead;
+            while ((bytesRead = inStream.read(buffer)) != -1) outStream.write(buffer, 0, bytesRead);
+            return true;
+        }
+        catch (Exception e) {
+            FileUtils.delete(destination);
+            return false;
+        }
+    }
+
+    /** Many driver zips wrap their files in one folder; move them up so the manifest sits at the top. */
+    private static void flattenSingleSubdirectory(File directory) {
+        File[] children = directory.listFiles();
+        if (children == null || children.length != 1 || !children[0].isDirectory()) return;
+        File inner = children[0];
+        File[] innerFiles = inner.listFiles();
+        if (innerFiles == null) return;
+        for (File file : innerFiles) file.renameTo(new File(directory, file.getName()));
+        FileUtils.delete(inner);
     }
 
     private static void showDownloadableListDialog(Type type, final Spinner spinner, final String defaultItem) {
