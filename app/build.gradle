@@ -12,8 +12,23 @@ android {
         versionName "11.2"
     }
 
+    // Stable signing key, so each new build can install over the previous one.
+    // CI decodes the SIGNING_KEYSTORE_BASE64 secret to a file and passes its path here.
+    def stableKeystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
+    signingConfigs {
+        if (stableKeystorePath != null && file(stableKeystorePath).exists()) {
+            stable {
+                storeFile file(stableKeystorePath)
+                storePassword System.getenv("SIGNING_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("SIGNING_KEY_ALIAS") ?: "winlator8"
+                keyPassword System.getenv("SIGNING_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
+            if (signingConfigs.findByName("stable") != null) signingConfig signingConfigs.stable
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
 
